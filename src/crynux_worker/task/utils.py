@@ -21,7 +21,9 @@ def get_image_hash(filename: str) -> str:
 
 def get_gpt_resp_hash(filename: str) -> str:
     with open(filename, mode="rb") as f:    
-        return "0x" + hashlib.sha256(f.read()).hexdigest()
+        resp = json.load(f)
+    hash_input = json.dumps(resp, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return "0x" + hashlib.sha256(hash_input.encode("utf-8")).hexdigest()
 
 
 def is_valid_url(url: str) -> bool:
