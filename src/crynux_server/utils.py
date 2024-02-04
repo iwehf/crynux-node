@@ -1,16 +1,12 @@
-import json
-import re
-from collections import OrderedDict
 import platform
-from typing import Any, Dict, Optional
+import re
+from typing import Optional
 
-from anyio import run_process, Path
+from anyio import Path, run_process
 from pydantic import BaseModel
 from web3 import Web3
 
-
 __all__ = [
-    "sort_dict",
     "get_os",
     "get_task_hash",
     "GpuInfo",
@@ -22,20 +18,6 @@ __all__ = [
     "DiskInfo",
     "get_disk_info",
 ]
-
-
-def sort_dict(input: Dict[str, Any]) -> Dict[str, Any]:
-    keys = sorted(input.keys())
-
-    res = OrderedDict()
-    for key in keys:
-        value = input[key]
-        if isinstance(value, dict):
-            value = sort_dict(value)
-        res[key] = value
-
-    return res
-
 
 def get_task_hash(task_args: str):
     res = Web3.keccak(task_args.encode("utf-8"))
