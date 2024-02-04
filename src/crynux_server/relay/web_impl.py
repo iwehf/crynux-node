@@ -6,7 +6,7 @@ from typing import BinaryIO, List
 import httpx
 from anyio import wrap_file
 
-from crynux_server.models import RelayTask
+from crynux_server.models import GPTTaskResponse, RelayTask
 
 from .abc import Relay
 from .exceptions import RelayError
@@ -64,7 +64,7 @@ class WebRelay(Relay):
         data = content["data"]
         return RelayTask.model_validate(data)
 
-    async def upload_task_result(self, task_id: int, file_paths: List[str]):
+    async def upload_sd_task_result(self, task_id: int, file_paths: List[str]):
         input = {"task_id": task_id}
         timestamp, signature = self.signer.sign(input)
 
@@ -76,17 +76,35 @@ class WebRelay(Relay):
                 files.append(("images", (filename, file_obj)))
 
             resp = await self.client.post(
-                f"/v1/inference_tasks/{task_id}/results",
+                f"/v1/inference_tasks/stable_diffusion/{task_id}/results",
                 data={"timestamp": timestamp, "signature": signature},
                 files=files,
             )
-            resp = _process_resp(resp, "uploadTaskResult")
+            resp = _process_resp(resp, "uploadSDTaskResult")
             content = resp.json()
             message = content["message"]
             if message != "success":
-                raise RelayError(resp.status_code, "uploadTaskResult", message)
+                raise RelayError(resp.status_code, "uploadSDTaskResult", message)
 
-    async def get_result(self, task_id: int, index: int, dst: BinaryIO):
+    async def upload_gpt_task_result(self, task_id: int, response: GPTTaskResponse):
+        input = {
+            "task_id": task_id,
+            "result": response.model_dump(mode="json")
+        }
+        timestamp, signature = self.signer.sign(input)
+        input.update({"timestamp": timestamp, "signature": signature})
+
+        resp = await self.client.post(
+            f"/v1/inference_tasks/gpt/{task_id}/results",
+            json=input,
+        )
+        resp = _process_resp(resp, "uploadGPTTaskResult")
+        content = resp.json()
+        message = content["message"]
+        if message != "success":
+            raise RelayError(resp.status_code, "uploadGPTTaskResult", message)
+
+    async def get_sd_result(self, task_id: int, index: int, dst: BinaryIO):
         input = {"task_id": task_id, "image_num": str(index)}
         timestamp, signature = self.signer.sign(input)
 
@@ -94,12 +112,25 @@ class WebRelay(Relay):
 
         async with self.client.stream(
             "GET",
-            f"/v1/inference_tasks/{task_id}/results/{index}",
+            f"/v1/inference_tasks/stable_diffusion/{task_id}/results/{index}",
             params={"timestamp": timestamp, "signature": signature},
         ) as resp:
-            resp = _process_resp(resp, "getTask")
+            resp = _process_resp(resp, "getSDResult")
             async for chunk in resp.aiter_bytes():
                 await async_dst.write(chunk)
+
+    async def get_gpt_result(self, task_id: int) -> GPTTaskResponse:
+        input = {"task_id": task_id}
+        timestamp, signature = self.signer.sign(input)
+
+        resp = await self.client.get(
+            f"/v1/inference_tasks/gpt/{task_id}/results",
+            params={"timestamp": timestamp, "signature": signature},
+        )
+        resp = _process_resp(resp, "getGPTResult")
+        content = resp.json()
+        data = content["data"]
+        return GPTTaskResponse.model_validate(data)
 
     async def close(self):
         await self.client.aclose()

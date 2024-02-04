@@ -1,9 +1,10 @@
 from .event import (TaskAborted, TaskCreated, TaskEvent, TaskKind,
                     TaskResultCommitmentsReady, TaskResultReady, TaskSuccess,
                     load_event_from_contracts, load_event_from_json)
+from .gpt import GPTTaskResponse
 from .node import (ChainNodeInfo, ChainNodeStatus, GpuInfo, NodeState,
                    NodeStatus, convert_node_status)
-from .task import ChainTask, TaskType, RelayTask, TaskState, TaskStatus
+from .task import ChainTask, RelayTask, TaskState, TaskStatus, TaskType
 from .tx import TxState, TxStatus
 
 __all__ = [
@@ -29,4 +30,5 @@ __all__ = [
     "TaskState",
     "TxStatus",
     "TxState",
+    "GPTTaskResponse",
 ]

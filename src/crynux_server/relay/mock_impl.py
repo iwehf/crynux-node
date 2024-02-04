@@ -1,16 +1,17 @@
 import os
 import shutil
-from typing import BinaryIO, Dict, List
-from tempfile import mkdtemp
 from contextlib import contextmanager
+from tempfile import mkdtemp
+from typing import BinaryIO, Dict, List
 
-from anyio import to_thread, Condition, get_cancelled_exc_class
+from anyio import Condition, get_cancelled_exc_class, open_file, to_thread
 
-from crynux_server.models import RelayTask
+from crynux_server.models import GPTTaskResponse, RelayTask
 from crynux_server.utils import get_task_hash
 
 from .abc import Relay
 from .exceptions import RelayError
+
 
 class MockRelay(Relay):
     def __init__(self) -> None:
@@ -18,7 +19,7 @@ class MockRelay(Relay):
 
         self.tasks: Dict[int, RelayTask] = {}
         self.task_results: Dict[int, List[str]] = {}
-        
+
         self._conditions: Dict[int, Condition] = {}
 
         self._tempdir = mkdtemp()
@@ -48,7 +49,7 @@ class MockRelay(Relay):
                 creator="",
                 task_hash=get_task_hash(task_args),
                 data_hash="",
-                task_args=task_args
+                task_args=task_args,
             )
             self.tasks[task_id] = t
             return t
@@ -57,8 +58,8 @@ class MockRelay(Relay):
         with self.wrap_error("getTask"):
             return self.tasks[task_id]
 
-    async def upload_task_result(self, task_id: int, file_paths: List[str]):
-        with self.wrap_error("uploadTaskResult"):
+    async def upload_sd_task_result(self, task_id: int, file_paths: List[str]):
+        with self.wrap_error("uploadSDTaskResult"):
             condition = self.get_condition(task_id=task_id)
             async with condition:
                 self.task_results[task_id] = []
@@ -71,8 +72,23 @@ class MockRelay(Relay):
 
                 condition.notify()
 
-    async def get_result(self, task_id: int, index: int, dst: BinaryIO):
-        with self.wrap_error("getResult"):
+    async def upload_gpt_task_result(self, task_id: int, response: GPTTaskResponse):
+        with self.wrap_error("uploadGPTTaskResult"):
+            condition = self.get_condition(task_id=task_id)
+            async with condition:
+                self.task_results[task_id] = []
+                dst_path = os.path.join(self._tempdir, "0.json")
+
+                content = response.model_dump_json()
+                async with await open_file(dst_path, "w", encoding="utf-8") as f:
+                    await f.write(content)
+
+                self.task_results[task_id].append(dst_path)
+
+                condition.notify()
+
+    async def get_sd_result(self, task_id: int, index: int, dst: BinaryIO):
+        with self.wrap_error("getSDResult"):
             condition = self.get_condition(task_id=task_id)
             async with condition:
                 while task_id not in self.task_results:
@@ -85,6 +101,21 @@ class MockRelay(Relay):
                     shutil.copyfileobj(src, dst)
 
             await to_thread.run_sync(_copy_file_obj)
+
+    async def get_gpt_result(self, task_id: int) -> GPTTaskResponse:
+        with self.wrap_error("getGPTResult"):
+            condition = self.get_condition(task_id=task_id)
+            async with condition:
+                while task_id not in self.task_results:
+                    await condition.wait()
+
+            src_file = self.task_results[task_id][0]
+
+            async with await open_file(src_file, "r", encoding="utf-8") as f:
+                content = await f.read()
+                resp = GPTTaskResponse.model_validate_json(content)
+
+            return resp
 
     async def close(self):
         if not self._closed:

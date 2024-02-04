@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import List, BinaryIO
 
-from crynux_server.models import RelayTask
+from crynux_server.models import RelayTask, GPTTaskResponse
 
 
 class Relay(ABC):
@@ -14,11 +14,19 @@ class Relay(ABC):
         ...
 
     @abstractmethod
-    async def upload_task_result(self, task_id: int, file_paths: List[str]):
+    async def upload_sd_task_result(self, task_id: int, file_paths: List[str]):
         ...
 
     @abstractmethod
-    async def get_result(self, task_id: int, index: int, dst: BinaryIO):
+    async def upload_gpt_task_result(self, task_id: int, response: GPTTaskResponse):
+        ...
+
+    @abstractmethod
+    async def get_sd_result(self, task_id: int, index: int, dst: BinaryIO):
+        ...
+
+    @abstractmethod
+    async def get_gpt_result(self, task_id: int) -> GPTTaskResponse:
         ...
 
     @abstractmethod
