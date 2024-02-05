@@ -421,18 +421,18 @@ async def test_node_manager(
             task_type, node_contracts[0], relay, tx_option=tx_option
         )
 
-        with BytesIO() as dst:
-            await relay.get_result(task_id=task_id, index=0, dst=dst)
-            dst.seek(0)
-            if task_type == models.TaskType.SD:
+        if task_type == models.TaskType.SD:
+            with BytesIO() as dst:
+                await relay.get_sd_result(task_id=task_id, index=0, dst=dst)
+                dst.seek(0)
                 img = Image.open(dst)
                 assert img.width == 512
                 assert img.height == 512
-            else:
-                resp = json.load(dst)
-                assert resp["model"] == "gpt2"
-                assert len(resp["choices"]) == 1
-                assert len(resp["choices"][0]["message"]["content"]) > 0
+        else:
+            resp = await relay.get_gpt_result(task_id=task_id)
+            assert resp.model == "gpt2"
+            assert len(resp.choices) == 1
+            assert len(resp.choices[0].message.content) > 0
 
         waits = []
         for m in node_managers:
@@ -603,6 +603,7 @@ async def partial_run_task(
         assert event["args"]["taskId"] == task_id
         assert event["args"]["result"] == result
 
+    return task_id
 
 @pytest.mark.parametrize("stage", [0, 1, 2])
 @pytest.mark.parametrize("task_type", [models.TaskType.SD, models.TaskType.LLM])
@@ -618,7 +619,7 @@ async def test_node_manager_with_recover(
     task_type: models.TaskType,
 ):
     node_managers = await create_node_managers(0)
-    await partial_run_task(
+    task_id = await partial_run_task(
         config=config,
         node_managers=node_managers,
         node_contracts=node_contracts,
@@ -638,18 +639,18 @@ async def test_node_manager_with_recover(
                 await n.state_cache.get_node_state()
             ).status == models.NodeStatus.Running
 
-        with BytesIO() as dst:
-            await relay.get_result(task_id=1, index=0, dst=dst)
-            dst.seek(0)
-            if task_type == models.TaskType.SD:
+        if task_type == models.TaskType.SD:
+            with BytesIO() as dst:
+                await relay.get_sd_result(task_id=task_id, index=0, dst=dst)
+                dst.seek(0)
                 img = Image.open(dst)
                 assert img.width == 512
                 assert img.height == 512
-            else:
-                resp = json.load(dst)
-                assert resp["model"] == "gpt2"
-                assert len(resp["choices"]) == 1
-                assert len(resp["choices"][0]["message"]["content"]) > 0
+        else:
+            resp = await relay.get_gpt_result(task_id=task_id)
+            assert resp.model == "gpt2"
+            assert len(resp.choices) == 1
+            assert len(resp.choices[0].message.content) > 0
 
         waits = []
         for m in node_managers:

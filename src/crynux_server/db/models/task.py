@@ -3,7 +3,7 @@ from typing import get_args
 import sqlalchemy as sa
 from sqlalchemy.orm import Mapped, mapped_column
 
-from crynux_server.models import TaskKind, TaskStatus
+from crynux_server.models import TaskKind, TaskStatus, TaskType
 
 from .base import Base, BaseMixin
 
@@ -12,6 +12,7 @@ class TaskState(Base, BaseMixin):
     __tablename__ = "task_states"
 
     task_id: Mapped[int] = mapped_column(sa.Integer, nullable=False, index=True)
+    task_type: Mapped[TaskType] = mapped_column(sa.Integer, nullable=False, index=False)
     round: Mapped[int] = mapped_column(sa.Integer, nullable=False, index=False)
     timeout: Mapped[int] = mapped_column(sa.Integer, nullable=False, index=False)
     status: Mapped[TaskStatus] = mapped_column(

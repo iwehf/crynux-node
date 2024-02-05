@@ -16,6 +16,7 @@ from anyio import (
     sleep_until,
     get_cancelled_exc_class,
     to_thread,
+    open_file
 )
 from celery.result import AsyncResult
 from hexbytes import HexBytes
@@ -115,6 +116,7 @@ class TaskRunner(ABC):
                 else:
                     state = models.TaskState(
                         task_id=self.task_id,
+                        task_type=models.TaskType.SD,
                         round=0,
                         timeout=0,
                         status=models.TaskStatus.Pending,
@@ -134,6 +136,9 @@ class TaskRunner(ABC):
                 self.state.status = models.TaskStatus.Aborted
                 need_dump = True
                 return False
+            if self.state.task_type != task.task_type:
+                self.state.task_type = task.task_type
+                need_dump = True
             if self.state.timeout != task.timeout:
                 self.state.timeout = task.timeout
                 need_dump = True
@@ -601,7 +606,16 @@ class InferenceTaskRunner(TaskRunner):
 
         async with self.state_context():
             if event.result_node == self.contracts.account:
-                await self.relay.upload_task_result(self.task_id, self.state.files)
+                if self.state.task_type == models.TaskType.SD:
+                    await self.relay.upload_sd_task_result(self.task_id, self.state.files)
+                else:
+                    assert len(self.state.files) == 1
+
+                    result_file = self.state.files[0]
+                    async with await open_file(result_file, mode="r", encoding="utf-8") as f:
+                        content = await f.read()
+                        result = models.GPTTaskResponse.model_validate_json(content)
+                    await self.relay.upload_gpt_task_result(self.task_id, result)
                 await self._call_task_contract_method(
                     "reportResultsUploaded",
                     task_id=self.task_id,

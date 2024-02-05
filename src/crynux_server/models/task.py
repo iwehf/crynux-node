@@ -60,6 +60,7 @@ class TaskStatus(Enum):
 
 class TaskState(BaseModel):
     task_id: int
+    task_type: TaskType
     round: int
     timeout: int
     status: TaskStatus

@@ -6,9 +6,9 @@ from typing import List, Optional, Type, cast
 from anyio import (Event, create_task_group, fail_after,
                    get_cancelled_exc_class, move_on_after, to_thread)
 from anyio.abc import TaskGroup
+from tenacity import AsyncRetrying, before_sleep_log, wait_fixed
 from web3 import Web3
 from web3.types import EventData
-from tenacity import AsyncRetrying, before_sleep_log, wait_fixed
 
 from crynux_server import models
 from crynux_server.config import Config, wait_privkey
@@ -16,10 +16,10 @@ from crynux_server.contracts import Contracts, set_contracts
 from crynux_server.event_queue import DbEventQueue, EventQueue, set_event_queue
 from crynux_server.relay import Relay, WebRelay, set_relay
 from crynux_server.task import (DbTaskStateCache, InferenceTaskRunner,
-                           TaskStateCache, TaskSystem, set_task_state_cache,
-                           set_task_system)
+                                TaskStateCache, TaskSystem,
+                                set_task_state_cache, set_task_system)
 from crynux_server.watcher import (BlockNumberCache, DbBlockNumberCache,
-                              EventWatcher, set_watcher)
+                                   EventWatcher, set_watcher)
 
 from .state_cache import (DbNodeStateCache, DbTxStateCache, ManagerStateCache,
                           StateCache, set_manager_state_cache)
@@ -62,9 +62,7 @@ def _make_watcher(
     queue: EventQueue,
     block_number_cache_cls: Type[BlockNumberCache],
 ):
-    watcher = EventWatcher.from_contracts(
-        contracts
-    )
+    watcher = EventWatcher.from_contracts(contracts)
 
     block_cache = block_number_cache_cls()
     watcher.set_blocknumber_cache(block_cache)
@@ -84,12 +82,17 @@ def _make_watcher(
 
 
 def _make_task_system(
-    queue: EventQueue, distributed: bool, retry: bool, task_state_cache_cls: Type[TaskStateCache]
+    queue: EventQueue,
+    distributed: bool,
+    retry: bool,
+    task_state_cache_cls: Type[TaskStateCache],
 ) -> TaskSystem:
     cache = task_state_cache_cls()
     set_task_state_cache(cache)
 
-    system = TaskSystem(state_cache=cache, queue=queue, distributed=distributed, retry=retry)
+    system = TaskSystem(
+        state_cache=cache, queue=queue, distributed=distributed, retry=retry
+    )
     system.set_runner_cls(runner_cls=InferenceTaskRunner)
 
     set_task_system(system)
@@ -283,7 +286,11 @@ class NodeManager(object):
         task = await self._contracts.task_contract.get_task(task_id=task_id)
         round = task.selected_nodes.index(self._contracts.account)
         state = models.TaskState(
-            task_id=task_id, round=round, timeout=task.timeout, status=models.TaskStatus.Pending
+            task_id=task_id,
+            task_type=task.task_type,
+            round=round,
+            timeout=task.timeout,
+            status=models.TaskStatus.Pending,
         )
 
         events = []
@@ -335,7 +342,6 @@ class NodeManager(object):
         _logger.debug(f"Recover task state {state}")
 
     async def _sync_state(self):
-
         async def _inner():
             assert self._node_state_manager is not None
             try:
@@ -346,10 +352,10 @@ class NodeManager(object):
                 with fail_after(5, shield=True):
                     await self.state_cache.set_node_state(
                         status=models.NodeStatus.Error,
-                        message="Node manager running error: cannot sync node state from chain."
+                        message="Node manager running error: cannot sync node state from chain.",
                     )
                 raise
-        
+
         if self._retry:
             async for attemp in AsyncRetrying(
                 wait=wait_fixed(self._retry_delay),
@@ -362,7 +368,6 @@ class NodeManager(object):
             await _inner()
 
     async def _watch_events(self):
-
         async def _inner():
             assert self._watcher is not None
             try:
@@ -373,7 +378,7 @@ class NodeManager(object):
                 with fail_after(5, shield=True):
                     await self.state_cache.set_node_state(
                         status=models.NodeStatus.Error,
-                        message="Node manager running error: cannot watch events from chain."
+                        message="Node manager running error: cannot watch events from chain.",
                     )
                 raise
 
@@ -418,7 +423,9 @@ class NodeManager(object):
 
                 if self.config.headless:
                     assert self._node_state_manager is not None
-                    tg.start_soon(self._node_state_manager.try_start, self.gpu_name, self.gpu_vram)
+                    tg.start_soon(
+                        self._node_state_manager.try_start, self.gpu_name, self.gpu_vram
+                    )
                 else:
                     tg.start_soon(self._sync_state)
                 tg.start_soon(self._watch_events)

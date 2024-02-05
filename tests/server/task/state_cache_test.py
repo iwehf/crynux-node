@@ -3,7 +3,7 @@ import pytest
 from datetime import datetime
 
 from crynux_server import db
-from crynux_server.models import TaskState, TaskStatus
+from crynux_server.models import TaskState, TaskStatus, TaskType
 from crynux_server.task.state_cache import DbTaskStateCache, MemoryTaskStateCache
 
 
@@ -12,6 +12,7 @@ async def test_memory_state_cache():
 
     state = TaskState(
         task_id=1,
+        task_type=TaskType.SD,
         round=1,
         status=TaskStatus.Pending,
         files=["test.png"],
@@ -55,6 +56,7 @@ async def test_db_state_cache(init_db):
 
     state = TaskState(
         task_id=1,
+        task_type=TaskType.SD,
         round=1,
         status=TaskStatus.Pending,
         files=["test.png"],
