@@ -34,6 +34,7 @@ def inference(
     script_dir: str | None = None,
     inference_logs_dir: str | None = None,
     result_url: str | None = None,
+    stream: bool = False,
     **kwargs,
 ):
     assert task_type == 0 or task_type == 1, f"Invalid task type: {task_type}"
@@ -56,6 +57,9 @@ def inference(
     if result_url is None:
         config = get_config()
         result_url = config.task.result_url
+    assert len(result_url) > 0 and result_url.startswith(
+        "http"
+    ), "result_url is invalid"
 
     proxy: ProxyConfig | None = None
     if "proxy" in kwargs:
@@ -98,6 +102,12 @@ def inference(
         result_dir,
         f"{task_args}",
     ]
+    if stream:
+        args.append("-stream")
+        stream_url = f"{result_url}/v1/tasks/{task_id}/result/stream"
+        if stream_url.startswith("http"):
+            stream_url.replace("http", "ws", 1)
+        args.append(f"-stream_url='{stream_url}'")
 
     envs = os.environ.copy()
     envs.update(
@@ -131,7 +141,9 @@ def inference(
     result_files = sorted(os.listdir(result_dir))
     result_paths = [os.path.join(result_dir, file) for file in result_files]
 
-    utils.upload_result(task_type, result_url + f"/v1/tasks/{task_id}/result", result_paths)
+    utils.upload_result(
+        task_type, result_url + f"/v1/tasks/{task_id}/result", result_paths
+    )
     _logger.info("Upload inference task result.")
 
 
@@ -145,6 +157,7 @@ def mock_inference(
     script_dir: str | None = None,
     inference_logs_dir: str | None = None,
     result_url: str | None = None,
+    stream: bool = False,
     **kwargs,
 ):
     assert task_type == 0 or task_type == 1, f"Invalid task type: {task_type}"
@@ -178,6 +191,7 @@ def mock_inference(
         f"script_dir: {script_dir},"
         f"inference_logs_dir: {inference_logs_dir},"
         f"result_url: {result_url},"
+        f"stream: {stream}"
     )
 
     result_dir = os.path.abspath(os.path.join(output_dir, str(task_id)))

@@ -479,7 +479,8 @@ class InferenceTaskRunner(TaskRunner):
             task_id=self.task_id,
             task_type=event.task_type,
             task_args=task.task_args,
-            task_config=self.local_config
+            task_config=self.local_config,
+            stream=event.task_type == models.TaskType.LLM and round == 0,
         )
 
         async def _run_task():

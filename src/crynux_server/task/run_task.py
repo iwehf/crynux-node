@@ -32,6 +32,7 @@ def _run_distributed_task(
         "task_type": int(task_type),
         "task_args": task_args,
         "distributed": True,
+        "stream": stream
     }
     res: AsyncResult = celery.send_task(
         "inference",
@@ -63,6 +64,7 @@ def _run_local_task(
         script_dir=task_config.script_dir,
         inference_logs_dir=task_config.inference_logs_dir,
         proxy=proxy,
+        stream=stream,
     )
 
 
