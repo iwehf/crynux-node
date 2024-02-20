@@ -2,7 +2,7 @@ import os
 import shutil
 from contextlib import contextmanager
 from tempfile import mkdtemp
-from typing import BinaryIO, Dict, List
+from typing import AsyncIterable, BinaryIO, Dict, List
 
 from anyio import Condition, get_cancelled_exc_class, open_file, to_thread
 
@@ -19,6 +19,7 @@ class MockRelay(Relay):
 
         self.tasks: Dict[int, RelayTask] = {}
         self.task_results: Dict[int, List[str]] = {}
+        self.task_result_streams: Dict[int, str] = {}
 
         self._conditions: Dict[int, Condition] = {}
 
@@ -86,6 +87,14 @@ class MockRelay(Relay):
                 self.task_results[task_id].append(dst_path)
 
                 condition.notify()
+
+    async def upload_gpt_task_result_stream(self, task_id: int, result_stream: AsyncIterable[str]):
+        with self.wrap_error("uploadGPTTaskResultStream"):
+            async for token in result_stream:
+                if task_id not in self.task_result_streams:
+                    self.task_result_streams[task_id] = token
+                else:
+                    self.task_result_streams[task_id] += token
 
     async def get_sd_result(self, task_id: int, index: int, dst: BinaryIO):
         with self.wrap_error("getSDResult"):

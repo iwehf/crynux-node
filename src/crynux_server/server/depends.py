@@ -6,12 +6,10 @@ from typing_extensions import Annotated
 from crynux_server.config import Config, get_config
 from crynux_server.contracts import Contracts, get_contracts
 from crynux_server.event_queue import EventQueue, get_event_queue
-from crynux_server.node_manager import (
-    ManagerStateCache,
-    NodeStateManager,
-    get_manager_state_cache,
-    get_node_state_manager,
-)
+from crynux_server.node_manager import (ManagerStateCache, NodeStateManager,
+                                        get_manager_state_cache,
+                                        get_node_state_manager)
+from crynux_server.relay import Relay, get_relay
 from crynux_server.task import TaskStateCache, get_task_state_cache
 
 __all__ = [
@@ -67,9 +65,21 @@ async def _get_contracts():
         raise
 
 
+async def _get_relay():
+    try:
+        return get_relay()
+    except AssertionError as e:
+        if "Relay has not been set" in str(e):
+            return None
+        raise
+
+
 ConfigDep = Annotated[Config, Depends(_get_config)]
 ManagerStateCacheDep = Annotated[ManagerStateCache, Depends(_get_manager_state_cache)]
-NodeStateManagerDep = Annotated[Optional[NodeStateManager], Depends(_get_node_state_manager)]
+NodeStateManagerDep = Annotated[
+    Optional[NodeStateManager], Depends(_get_node_state_manager)
+]
 EventQueueDep = Annotated[Optional[EventQueue], Depends(_get_event_queue)]
 TaskStateCacheDep = Annotated[Optional[TaskStateCache], Depends(_get_task_state_cache)]
 ContractsDep = Annotated[Optional[Contracts], Depends(_get_contracts)]
+RelayDep = Annotated[Optional[Relay], Depends(_get_relay)]

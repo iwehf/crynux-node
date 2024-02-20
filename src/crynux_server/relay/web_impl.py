@@ -1,9 +1,10 @@
 import json
 import os
 from contextlib import ExitStack
-from typing import BinaryIO, List
+from typing import AsyncIterable, BinaryIO, List
 
 import httpx
+import websockets
 from anyio import wrap_file
 
 from crynux_server.models import GPTTaskResponse, RelayTask
@@ -37,6 +38,7 @@ def _process_resp(resp: httpx.Response, method: str):
 class WebRelay(Relay):
     def __init__(self, base_url: str, privkey: str) -> None:
         super().__init__()
+        self.base_url = base_url
         self.client = httpx.AsyncClient(base_url=base_url, timeout=30)
         self.signer = Signer(privkey=privkey)
 
@@ -80,7 +82,7 @@ class WebRelay(Relay):
                 f"/v1/inference_tasks/stable_diffusion/{task_id}/results",
                 data={"timestamp": timestamp, "signature": signature},
                 files=files,
-                timeout=None
+                timeout=None,
             )
             resp = _process_resp(resp, "uploadSDTaskResult")
             content = resp.json()
@@ -89,10 +91,7 @@ class WebRelay(Relay):
                 raise RelayError(resp.status_code, "uploadSDTaskResult", message)
 
     async def upload_gpt_task_result(self, task_id: int, response: GPTTaskResponse):
-        input = {
-            "task_id": task_id,
-            "result": response.model_dump(mode="json")
-        }
+        input = {"task_id": task_id, "result": response.model_dump(mode="json")}
         timestamp, signature = self.signer.sign(input)
         input.update({"timestamp": timestamp, "signature": signature})
 
@@ -105,6 +104,17 @@ class WebRelay(Relay):
         message = content["message"]
         if message != "success":
             raise RelayError(resp.status_code, "uploadGPTTaskResult", message)
+
+    async def upload_gpt_task_result_stream(
+        self, task_id: int, result_stream: AsyncIterable[str]
+    ):
+        input = {"task_id": task_id}
+        timestamp, signature = self.signer.sign(input)
+
+        url = f"{self.base_url}/v1/inference_tasks/gpt/{task_id}/results/stream?timestamp={timestamp}&signature={signature}"
+
+        async with websockets.connect(url) as websocket:
+            await websocket.send(result_stream)
 
     async def get_sd_result(self, task_id: int, index: int, dst: BinaryIO):
         input = {"task_id": task_id, "image_num": str(index)}
