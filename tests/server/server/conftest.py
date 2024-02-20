@@ -211,7 +211,6 @@ async def managers(
             task_state_cache,
             queue=queue,
             distributed=config.distributed,
-            task_name="mock_inference",
         )
         if i == 0:
             set_task_state_cache(task_state_cache)

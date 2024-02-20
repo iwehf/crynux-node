@@ -3,16 +3,17 @@ import secrets
 import os
 import shutil
 from io import BytesIO
-from typing import List, Callable, Awaitable
+from typing import List, Callable, Awaitable, Optional
+from functools import partial
 
 import pytest
-from anyio import create_task_group, sleep, fail_after, Event
+from anyio import create_task_group, Event, from_thread
 from eth_account import Account
 from PIL import Image
 from web3 import Web3
 
 from crynux_server import models
-from crynux_server.config import Config, TxOption, set_config
+from crynux_server.config import Config, TxOption, set_config, TaskConfig
 from crynux_server.contracts import Contracts
 from crynux_server.event_queue import EventQueue, MemoryEventQueue
 from crynux_server.node_manager import (
@@ -29,6 +30,7 @@ from crynux_server.task import InferenceTaskRunner, MemoryTaskStateCache, TaskSy
 from crynux_server.task.state_cache import TaskStateCache
 from crynux_server.utils import get_task_hash
 from crynux_server.watcher import EventWatcher, MemoryBlockNumberCache
+from crynux_worker.task.utils import get_image_hash, get_gpt_resp_hash
 
 
 @pytest.fixture
@@ -159,6 +161,55 @@ def relay():
     return MockRelay()
 
 
+def mock_run_task(
+    queue: EventQueue,
+    distributed: bool,
+    task_id: int,
+    task_type: models.TaskType,
+    task_args: str,
+    task_config: Optional[TaskConfig] = None,
+    stream: bool = False,
+):
+    assert task_config is not None
+    result_dir = os.path.abspath(os.path.join(task_config.output_dir, str(task_id)))
+    if not os.path.exists(result_dir):
+        os.makedirs(result_dir, exist_ok=True)
+
+    if task_type == models.TaskType.SD:
+        img = Image.new("RGB", (512, 512), (255, 255, 255))
+        dst = os.path.join(result_dir, "test.png")
+        img.save(dst, "PNG")
+        result_hash = get_image_hash(dst)
+    else:
+        res = {
+            "model": "gpt2",
+            "choices": [
+                {
+                    "finish_reason": "length",
+                    "message": {
+                        "role": "assistant",
+                        "content": '\n\nI have a chat bot, called "Eleanor" which was developed by my team on Skype. '
+                        "The only thing I will say is this",
+                    },
+                    "index": 0,
+                }
+            ],
+            "usage": {"prompt_tokens": 11, "completion_tokens": 30, "total_tokens": 41},
+        }
+        dst = os.path.join(result_dir, "test.json")
+        with open(dst, mode="w", encoding="utf-8") as f:
+            json.dump(res, f, ensure_ascii=False)
+        result_hash = get_gpt_resp_hash(dst)
+    
+    event = models.TaskResultReady(
+        task_id=task_id,
+        hashes=[result_hash],
+        files=[dst]
+    )
+
+    from_thread.run(queue.put, event)
+
+
 @pytest.fixture
 async def create_node_managers(
     privkeys: List[str],
@@ -199,7 +250,6 @@ async def create_node_managers(
                 task_state_cache,
                 queue=queue,
                 distributed=config.distributed,
-                task_name="mock_inference",
                 retry=(fail_step > 0),
             )
 
@@ -211,22 +261,23 @@ async def create_node_managers(
             local_config.output_dir = data_dir
             new_data_dirs.append(data_dir)
 
-            def make_runner_cls(contracts, relay, watcher, local_config, fail_step):
+            def make_runner_cls(contracts, queue, relay, watcher, local_config, fail_step):
+                _run_task = partial(mock_run_task, queue=queue)
+
                 class _InferenceTaskRunner(InferenceTaskRunner):
                     def __init__(
                         self,
                         task_id: int,
-                        task_name: str,
                         distributed: bool,
                         state_cache: TaskStateCache,
                         queue: EventQueue,
                     ) -> None:
                         super().__init__(
                             task_id=task_id,
-                            task_name=task_name,
                             distributed=distributed,
                             state_cache=state_cache,
                             queue=queue,
+                            task_func=_run_task,
                             contracts=contracts,
                             relay=relay,
                             watcher=watcher,
@@ -267,7 +318,7 @@ async def create_node_managers(
                 return _InferenceTaskRunner
 
             system.set_runner_cls(
-                make_runner_cls(contracts, relay, watcher, local_config, fail_step)
+                make_runner_cls(contracts, queue, relay, watcher, local_config, fail_step)
             )
 
             state_cache = ManagerStateCache(

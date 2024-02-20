@@ -166,14 +166,13 @@ async def test_task_system_auto_cancel():
         def __init__(
             self,
             task_id: int,
-            task_name: str,
             distributed: bool,
             state_cache: Optional[TaskStateCache] = None,
             queue: Optional[EventQueue] = None,
             timeout: int = 1,
         ):
             super().__init__(
-                task_id, task_name, distributed, state_cache, queue, timeout
+                task_id=task_id, distributed=distributed, state_cache=state_cache, queue=queue, timeout=timeout
             )
 
     system.set_runner_cls(TimeoutTaskRunner)

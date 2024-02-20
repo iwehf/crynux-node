@@ -115,6 +115,7 @@ class TaskConfig(BaseModel):
     external_cache_dir: str
     script_dir: str
     inference_logs_dir: str
+    result_url: str = "http://localhost:7412"
 
     preloaded_models: Optional[PreloadedModelsConfig] = None
 

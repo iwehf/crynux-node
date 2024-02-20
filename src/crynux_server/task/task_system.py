@@ -24,13 +24,11 @@ class TaskSystem(object):
         queue: EventQueue,
         distributed: bool = False,
         retry: bool = True,
-        task_name: str = "inference",
     ) -> None:
         self._state_cache = state_cache
         self._queue = queue
         self._retry = retry
         self._distributed = distributed
-        self._task_name = task_name
 
         self._tg: Optional[TaskGroup] = None
 
@@ -90,7 +88,6 @@ class TaskSystem(object):
                 task_id=state.task_id,
                 state_cache=self._state_cache,
                 queue=self._queue,
-                task_name=self._task_name,
                 distributed=self._distributed,
             )
             runner.state = state
@@ -115,7 +112,6 @@ class TaskSystem(object):
                             task_id=task_id,
                             state_cache=self._state_cache,
                             queue=self._queue,
-                            task_name=self._task_name,
                             distributed=self._distributed,
                         )
                         self._runners[task_id] = runner

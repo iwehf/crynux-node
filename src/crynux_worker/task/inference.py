@@ -34,7 +34,6 @@ def inference(
     script_dir: str | None = None,
     inference_logs_dir: str | None = None,
     result_url: str | None = None,
-    distributed: bool = True,
     **kwargs,
 ):
     assert task_type == 0 or task_type == 1, f"Invalid task type: {task_type}"
@@ -129,12 +128,11 @@ def inference(
         else:
             raise TaskError
 
-    if distributed:
-        result_files = sorted(os.listdir(result_dir))
-        result_paths = [os.path.join(result_dir, file) for file in result_files]
+    result_files = sorted(os.listdir(result_dir))
+    result_paths = [os.path.join(result_dir, file) for file in result_files]
 
-        utils.upload_result(task_type, result_url + f"/v1/tasks/{task_id}/result", result_paths)
-        _logger.info("Upload inference task result.")
+    utils.upload_result(task_type, result_url + f"/v1/tasks/{task_id}/result", result_paths)
+    _logger.info("Upload inference task result.")
 
 
 def mock_inference(
@@ -147,7 +145,6 @@ def mock_inference(
     script_dir: str | None = None,
     inference_logs_dir: str | None = None,
     result_url: str | None = None,
-    distributed: bool = True,
     **kwargs,
 ):
     assert task_type == 0 or task_type == 1, f"Invalid task type: {task_type}"
@@ -188,7 +185,8 @@ def mock_inference(
         os.makedirs(result_dir, exist_ok=True)
 
     if task_type == 0:
-        shutil.copyfile("test.png", os.path.join(result_dir, "test.png"))
+        dst = "test.png"
+        shutil.copyfile("test.png", os.path.join(result_dir, dst))
     elif task_type == 1:
         res = {
             "model": "gpt2",
@@ -209,6 +207,5 @@ def mock_inference(
         with open(dst, mode="w", encoding="utf-8") as f:
             json.dump(res, f, ensure_ascii=False)
 
-    if distributed:
-        utils.upload_result(task_type, result_url + f"/v1/tasks/{task_id}/result", ["test.png"])
-        _logger.info("Upload inference task result.")
+    utils.upload_result(task_type, result_url + f"/v1/tasks/{task_id}/result", [dst])
+    _logger.info("Upload inference task result.")

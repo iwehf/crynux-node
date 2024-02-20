@@ -5,20 +5,20 @@ import time
 from abc import ABC, abstractmethod
 from collections import deque
 from contextlib import asynccontextmanager
+from functools import partial
 from typing import Awaitable, Callable, Deque, List, Optional, Tuple
 
 from anyio import (
-    Condition,
     CancelScope,
+    Condition,
     Lock,
     create_task_group,
     fail_after,
-    sleep_until,
     get_cancelled_exc_class,
+    open_file,
+    sleep_until,
     to_thread,
-    open_file
 )
-from celery.result import AsyncResult
 from hexbytes import HexBytes
 from tenacity import (
     before_sleep_log,
@@ -41,6 +41,7 @@ from crynux_worker.task.error import TaskInvalid
 
 from .state_cache import TaskStateCache, get_task_state_cache
 from .utils import make_result_commitments
+from .run_task import RunTaskProto, run_task
 
 _logger = logging.getLogger(__name__)
 
@@ -54,13 +55,11 @@ class TaskRunner(ABC):
     def __init__(
         self,
         task_id: int,
-        task_name: str,
         distributed: bool,
         state_cache: Optional[TaskStateCache] = None,
         queue: Optional[EventQueue] = None,
     ):
         self.task_id = task_id
-        self.task_name = task_name
         self.distributed = distributed
         if state_cache is None:
             state_cache = get_task_state_cache()
@@ -153,15 +152,19 @@ class TaskRunner(ABC):
         _logger.debug(f"Process event {event}")
         if event.kind == "TaskCreated":
             assert isinstance(event, models.TaskCreated)
+            await self.wait_for_status(models.TaskStatus.Pending)
             return await self.task_created(event, finish_callback)
         elif event.kind == "TaskResultReady":
             assert isinstance(event, models.TaskResultReady)
+            await self.wait_for_status(models.TaskStatus.Executing)
             return await self.result_ready(event, finish_callback)
         elif event.kind == "TaskResultCommitmentsReady":
             assert isinstance(event, models.TaskResultCommitmentsReady)
+            await self.wait_for_status(models.TaskStatus.ResultUploaded)
             return await self.commitment_ready(event, finish_callback)
         elif event.kind == "TaskSuccess":
             assert isinstance(event, models.TaskSuccess)
+            await self.wait_for_status(models.TaskStatus.Disclosed)
             return await self.task_success(event, finish_callback)
         if event.kind == "TaskAborted":
             assert isinstance(event, models.TaskAborted)
@@ -220,7 +223,7 @@ class TaskRunner(ABC):
         ack_id: int,
         event: models.TaskEvent,
         finish_callback: Callable[[], Awaitable[None]],
-    ):
+    ) -> None:
         try:
             await self.process_event(event, finish_callback)
             # sheild the ack operator from cancel to ensure the event to be acked when finish_callback is being called
@@ -230,7 +233,7 @@ class TaskRunner(ABC):
             _logger.debug(f"Task {self.task_id} process event {event.kind} cancelled.")
             self._deque.append((ack_id, event))
             raise
-        except Exception:
+        except Exception as e:
             _logger.debug(f"Task {self.task_id} process event {event.kind} failed.")
             self._deque.append((ack_id, event))
             raise
@@ -312,10 +315,10 @@ class InferenceTaskRunner(TaskRunner):
     def __init__(
         self,
         task_id: int,
-        task_name: str,
         distributed: bool,
         state_cache: Optional[TaskStateCache] = None,
         queue: Optional[EventQueue] = None,
+        task_func: RunTaskProto = run_task,
         contracts: Optional[Contracts] = None,
         relay: Optional[Relay] = None,
         watcher: Optional[EventWatcher] = None,
@@ -323,11 +326,11 @@ class InferenceTaskRunner(TaskRunner):
     ) -> None:
         super().__init__(
             task_id=task_id,
-            task_name=task_name,
             distributed=distributed,
             state_cache=state_cache,
             queue=queue,
         )
+        self._task_func = task_func
         if contracts is None:
             self.contracts = get_contracts()
         else:
@@ -448,8 +451,6 @@ class InferenceTaskRunner(TaskRunner):
     async def task_created(
         self, event: models.TaskCreated, finish_callback: Callable[[], Awaitable[None]]
     ):
-        await self.wait_for_status(models.TaskStatus.Pending)
-
         async with self.state_context():
             self.state.round = event.round
 
@@ -472,76 +473,18 @@ class InferenceTaskRunner(TaskRunner):
 
         task = await get_task()
 
-        if self.distributed:
+        task_func = partial(
+            self._task_func, 
+            distributed=self.distributed,
+            task_id=self.task_id,
+            task_type=event.task_type,
+            task_args=task.task_args,
+            task_config=self.local_config
+        )
 
-            def run_distributed_task():
-                from crynux_server.celery_app import get_celery
-
-                celery = get_celery()
-                kwargs = {
-                    "task_id": task.task_id,
-                    "task_type": int(event.task_type),
-                    "task_args": task.task_args,
-                    "distributed": True,
-                }
-                res: AsyncResult = celery.send_task(
-                    self.task_name,
-                    kwargs=kwargs,
-                )
-                res.get()
-
-            await to_thread.run_sync(run_distributed_task, cancellable=True)
-            async with self.state_context():
-                self.state.status = models.TaskStatus.Executing
-
-        else:
-
-            def run_local_task():
-                import crynux_worker.task as h_task
-                from crynux_worker.task.utils import get_image_hash, get_gpt_resp_hash
-
-                assert self.local_config is not None
-                proxy = None
-                if self.local_config.proxy is not None:
-                    proxy = self.local_config.proxy.model_dump()
-
-                task_func = getattr(h_task, self.task_name)
-                kwargs = dict(
-                    task_id=task.task_id,
-                    task_type=int(event.task_type),
-                    task_args=task.task_args,
-                    distributed=False,
-                    result_url="",
-                    output_dir=self.local_config.output_dir,
-                    hf_cache_dir=self.local_config.hf_cache_dir,
-                    external_cache_dir=self.local_config.external_cache_dir,
-                    script_dir=self.local_config.script_dir,
-                    inference_logs_dir=self.local_config.inference_logs_dir,
-                    proxy=proxy,
-                )
-
-                task_func(**kwargs)
-
-                result_dir = os.path.join(
-                    self.local_config.output_dir, str(task.task_id)
-                )
-                result_files = sorted(os.listdir(result_dir))
-                result_paths = [os.path.join(result_dir, file) for file in result_files]
-                if event.task_type == models.TaskType.SD:
-                    hashes = [get_image_hash(path) for path in result_paths]
-                else:
-                    hashes = [get_gpt_resp_hash(path) for path in result_paths]
-                return models.TaskResultReady(
-                    task_id=self.task_id,
-                    hashes=hashes,
-                    files=result_paths,
-                )
-
+        async def _run_task():
             try:
-                next_event = await to_thread.run_sync(run_local_task, cancellable=True)
-                async with self.state_context():
-                    self.state.status = models.TaskStatus.Executing
-                await self.queue.put(next_event)
+                await to_thread.run_sync(task_func, cancellable=True)
             except TaskInvalid as e:
                 _logger.exception(e)
                 _logger.error("Task error, report error to the chain.")
@@ -549,13 +492,16 @@ class InferenceTaskRunner(TaskRunner):
                     await self._report_error()
                 await finish_callback()
 
+        async with create_task_group() as tg:
+            tg.start_soon(_run_task,)
+            async with self.state_context():
+                self.state.status = models.TaskStatus.Executing
+
     async def result_ready(
         self,
         event: models.TaskResultReady,
         finish_callback: Callable[[], Awaitable[None]],
     ):
-        await self.wait_for_status(models.TaskStatus.Executing)
-
         async with self.state_context():
             if len(self.state.result) == 0:
                 result, commitment, nonce = make_result_commitments(event.hashes)
@@ -583,8 +529,6 @@ class InferenceTaskRunner(TaskRunner):
         event: models.TaskResultCommitmentsReady,
         finish_callback: Callable[[], Awaitable[None]],
     ):
-        await self.wait_for_status(models.TaskStatus.ResultUploaded)
-
         async with self.state_context():
             assert (
                 len(self.state.result) > 0
@@ -602,17 +546,19 @@ class InferenceTaskRunner(TaskRunner):
     async def task_success(
         self, event: models.TaskSuccess, finish_callback: Callable[[], Awaitable[None]]
     ):
-        await self.wait_for_status(models.TaskStatus.Disclosed)
-
         async with self.state_context():
             if event.result_node == self.contracts.account:
                 if self.state.task_type == models.TaskType.SD:
-                    await self.relay.upload_sd_task_result(self.task_id, self.state.files)
+                    await self.relay.upload_sd_task_result(
+                        self.task_id, self.state.files
+                    )
                 else:
                     assert len(self.state.files) == 1
 
                     result_file = self.state.files[0]
-                    async with await open_file(result_file, mode="r", encoding="utf-8") as f:
+                    async with await open_file(
+                        result_file, mode="r", encoding="utf-8"
+                    ) as f:
                         content = await f.read()
                         result = models.GPTTaskResponse.model_validate_json(content)
                     await self.relay.upload_gpt_task_result(self.task_id, result)
@@ -674,7 +620,6 @@ class MockTaskRunner(TaskRunner):
     def __init__(
         self,
         task_id: int,
-        task_name: str,
         distributed: bool,
         state_cache: Optional[TaskStateCache] = None,
         queue: Optional[EventQueue] = None,
@@ -682,7 +627,6 @@ class MockTaskRunner(TaskRunner):
     ):
         super().__init__(
             task_id=task_id,
-            task_name=task_name,
             distributed=distributed,
             state_cache=state_cache,
             queue=queue,
@@ -715,8 +659,6 @@ class MockTaskRunner(TaskRunner):
     async def task_created(
         self, event: models.TaskCreated, finish_callback: Callable[[], Awaitable[None]]
     ):
-        await self.wait_for_status(models.TaskStatus.Pending)
-
         async with self.state_context():
             self.state.round = event.round
             self.state.status = models.TaskStatus.Executing
@@ -726,8 +668,6 @@ class MockTaskRunner(TaskRunner):
         event: models.TaskResultReady,
         finish_callback: Callable[[], Awaitable[None]],
     ):
-        await self.wait_for_status(models.TaskStatus.Executing)
-
         async with self.state_context():
             self.state.files = event.files
             self.state.result = b"".join([bytes.fromhex(h[2:]) for h in event.hashes])
@@ -738,8 +678,6 @@ class MockTaskRunner(TaskRunner):
         event: models.TaskResultCommitmentsReady,
         finish_callback: Callable[[], Awaitable[None]],
     ):
-        await self.wait_for_status(models.TaskStatus.ResultUploaded)
-
         async with self.state_context():
             self.state.status = models.TaskStatus.Disclosed
             self.state.disclosed = True
@@ -747,8 +685,6 @@ class MockTaskRunner(TaskRunner):
     async def task_success(
         self, event: models.TaskSuccess, finish_callback: Callable[[], Awaitable[None]]
     ):
-        await self.wait_for_status(models.TaskStatus.Disclosed)
-
         async with self.state_context():
             self.state.status = models.TaskStatus.Success
         await finish_callback()
