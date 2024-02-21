@@ -17,7 +17,7 @@ async def _run():
 
     await db.init(config.db)
 
-    server = Server(config.web_dist)
+    server = Server(config.headless, config.web_dist)
 
     gpu_info = await utils.get_gpu_info()
     gpu_name = gpu_info.model

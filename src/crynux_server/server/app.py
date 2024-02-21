@@ -7,15 +7,15 @@ from fastapi.staticfiles import StaticFiles
 from hypercorn.asyncio import serve
 from hypercorn.config import Config
 
-from .v1 import router as v1_router
+from . import v1
 from .middleware import add_middleware
 
 
 class Server(object):
-    def __init__(self, web_dist: str = "") -> None:
+    def __init__(self, headless: bool, web_dist: str = "") -> None:
         self._app = FastAPI()
-        self._app.include_router(v1_router, prefix="/manager")
-        if web_dist != "":
+        v1.include_router(self._app, headless=headless, prefix="/manager")
+        if not headless and web_dist != "":
             self._app.mount("/", StaticFiles(directory=web_dist, html=True), name="web")
         add_middleware(self._app)
 
@@ -32,9 +32,7 @@ class Server(object):
         config.errorlog = "-"
 
         try:
-            async with create_task_group() as tg:
-                serve_func = partial(serve, self._app, config, shutdown_trigger=self._shutdown_event.wait)  # type: ignore
-                tg.start_soon(serve_func)
+            await serve(self._app, config=config, shutdown_trigger=self._shutdown_event.wait)  # type: ignore
         finally:
             self._shutdown_event = None
 
