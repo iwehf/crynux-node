@@ -104,7 +104,7 @@ def inference(
     ]
     if stream:
         args.append("-stream")
-        stream_url = f"{result_url}/v1/tasks/{task_id}/result/stream"
+        stream_url = f"{result_url}/manager/v1/tasks/{task_id}/result/stream"
         if stream_url.startswith("http"):
             stream_url.replace("http", "ws", 1)
         args.append(f"-stream_url='{stream_url}'")
@@ -142,7 +142,7 @@ def inference(
     result_paths = [os.path.join(result_dir, file) for file in result_files]
 
     utils.upload_result(
-        task_type, result_url + f"/v1/tasks/{task_id}/result", result_paths
+        task_type, result_url + f"/manager/v1/tasks/{task_id}/result", result_paths
     )
     _logger.info("Upload inference task result.")
 
@@ -221,5 +221,7 @@ def mock_inference(
         with open(dst, mode="w", encoding="utf-8") as f:
             json.dump(res, f, ensure_ascii=False)
 
-    utils.upload_result(task_type, result_url + f"/v1/tasks/{task_id}/result", [dst])
+    utils.upload_result(
+        task_type, result_url + f"/manager/v1/tasks/{task_id}/result", [dst]
+    )
     _logger.info("Upload inference task result.")
