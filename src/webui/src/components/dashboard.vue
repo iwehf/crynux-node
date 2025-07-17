@@ -783,7 +783,7 @@ const copyText = async (text) => {
                     <a-col :span="8">
                         <a-statistic title="Prob Weight">
                             <template #formatter>
-                                <span class="score-value">{{ (nodeScores.prob_weight * 100).toFixed(2) }}</span
+                                <span class="score-value">{{ (nodeScores.prob_weight * 200).toFixed(2) }}</span
                                 ><span class="score-percent">%</span>
                             </template>
                         </a-statistic>
